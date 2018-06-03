@@ -1,70 +1,110 @@
 package main
 
-import(
-	"github.com/go-redis/redis"
+import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+
+	"strconv"
+
+	"github.com/go-redis/redis"
 )
 
-func main(){
-	http.HandleFunc("/jobs", HandleJobs)
-	http.HandleFunc("/results", HandleResults)
-	http.HandleFunc("/processing", HandleProcessing)
+type CachedConn []Connection
+
+type Connection struct {
+	Client *redis.Client
+	Name   string
+	Queue  Queue
+}
+type Queue struct {
+	Name string
+}
+
+func main() {
+	cache := CachedConn{}
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		uri := strings.Split(r.RequestURI, "/")
+		if uri[3] == "count" {
+			HandleCount(w, r, cache, uri)
+		} else {
+			HandleQueue(w, r, cache, uri)
+		}
+	})
 	fmt.Println("Starting web server on port: 8080")
 	http.ListenAndServe(":8080", nil)
 }
 
-func HandleProcessing(w http.ResponseWriter, r *http.Request) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     "redis:6379",
-		Password: "",
-		DB:       0,
-	})
+func HandleQueue(w http.ResponseWriter, r *http.Request, cache CachedConn, uri []string) {
+	// fmt.Println("Incoming request: /" + conn.Queue.Name)
 
-	responseArr, err := client.LRange("job:processing", 0, -1).Result()
-	if err != nil{
+	var conn Connection
+	conn, err := ReturnConn(cache, uri[1])
+
+	if err != nil {
+		// Connection not found
+		client := redis.NewClient(&redis.Options{
+			Addr:     uri[1] + ":6379",
+			Password: "",
+			DB:       0,
+		})
+		conn = Connection{
+			Client: client,
+			Name:   uri[1],
+			Queue: Queue{
+				uri[2],
+			},
+		}
+		cache = append(cache, conn)
+	}
+	responseArr, err := conn.Client.LRange(conn.Queue.Name, 0, -1).Result()
+	if err != nil {
 		http.Error(w, err.Error(), 500)
 	}
 	response := ""
-	for _, element := range responseArr{
+	for _, element := range responseArr {
 		response += element
+		response += "\n"
 	}
 	w.Write([]byte(response))
 }
 
-func HandleJobs(w http.ResponseWriter, r *http.Request) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     "redis:6379",
-		Password: "",
-		DB:       0,
-	})
+func HandleCount(w http.ResponseWriter, r *http.Request, cache CachedConn, uri []string) {
+	// fmt.Println("Incoming request: /" + conn.Queue.Name + "/count")
+	var conn Connection
+	conn, err := ReturnConn(cache, uri[1])
 
-	responseArr, err := client.LRange("job", 0, -1).Result()
-	if err != nil{
+	if err != nil {
+		// Connection not found
+		client := redis.NewClient(&redis.Options{
+			Addr:     uri[1] + ":6379",
+			Password: "",
+			DB:       0,
+		})
+		conn = Connection{
+			Client: client,
+			Name:   uri[1],
+			Queue: Queue{
+				uri[2],
+			},
+		}
+		cache = append(cache, conn)
+	}
+	response, err := conn.Client.LLen(conn.Queue.Name).Result()
+	if err != nil {
 		http.Error(w, err.Error(), 500)
 	}
-	response := ""
-	for _, element := range responseArr{
-		response += element
-	}
-	w.Write([]byte(response))
+	w.Write([]byte(strconv.Itoa(int(response))))
 }
 
+func ReturnConn(cache CachedConn, name string) (Connection, error) {
+	var connection Connection
 
-func HandleResults(w http.ResponseWriter, r *http.Request) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     "redis:6379",
-		Password: "",
-		DB:       0,
-	})
-
-	responseArr, err := client.LRange("job:results", 0, -1).Result()
-	if err != nil{
-		http.Error(w, err.Error(), 500)
+	for _, conn := range cache {
+		if conn.Name == name {
+			return conn, nil
+		}
 	}
-	response := ""
-	for _, element := range responseArr{
-		response += element
-	}
-	w.Write([]byte(response))
+	return connection, errors.New("Connection not found")
 }

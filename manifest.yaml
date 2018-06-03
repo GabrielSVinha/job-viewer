@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-viewer
+  labels:
+    app: job-viewer
+spec:
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 30666
+  selector:
+    app: job-viewer
+  type: NodePort
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: job-viewer
+  labels:
+    app: job-viewer
+spec:
+  containers:
+    - name: master
+      image: vinhags/job-viewer
+      imagePullPolicy: Always
+      ports:
+        - containerPort: 8080
